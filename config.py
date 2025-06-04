@@ -16,6 +16,10 @@ class TrainingConfig:
     warmup_steps: int = 100
     weight_decay: float = 0.01
     
+    # A100 GPU optimized settings
+    use_mixed_precision: bool = True  # Enable FP16/BF16 for A100
+    dataloader_num_workers: int = 4   # Increase for A100
+    
     # Fine-tuning strategy
     full_finetuning: bool = True  # True for full, False for head-only
     freeze_layers: int = 0  # Number of layers to freeze from bottom (only used if full_finetuning=False)
@@ -42,7 +46,7 @@ class TrainingConfig:
     # Evaluation settings
     eval_steps: int = 500
     save_steps: int = 1000
-    logging_steps: int = 100
+    logging_steps: int = 500  # Increased from 100 to reduce log frequency
     
     # Generation settings for testing
     max_new_tokens: int = 200
@@ -50,6 +54,10 @@ class TrainingConfig:
     top_k: int = 50
     top_p: float = 0.9
     do_sample: bool = True
+    
+    # Logging settings
+    quiet_mode: bool = False  # If True, minimal logging
+    progress_bar: bool = True  # Show progress bars
     
     def __post_init__(self):
         # Create directories if they don't exist

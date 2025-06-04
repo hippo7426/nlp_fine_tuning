@@ -115,7 +115,7 @@ def create_dataloaders(
         train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
-        num_workers=0,  # Set to 0 for Windows compatibility
+        num_workers=getattr(config, 'dataloader_num_workers', 0),  # Use config setting or default to 0
         pin_memory=config.use_gpu
     )
     
@@ -123,7 +123,7 @@ def create_dataloaders(
         val_dataset,
         batch_size=config.batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=getattr(config, 'dataloader_num_workers', 0),  # Use config setting or default to 0
         pin_memory=config.use_gpu
     )
     

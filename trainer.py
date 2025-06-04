@@ -117,7 +117,16 @@ class KoGPT2Trainer:
         self.model.train()
         total_loss = 0
         
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}")
+        # Configure progress bar based on settings
+        if self.config.quiet_mode:
+            # Minimal progress bar in quiet mode
+            progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", 
+                              disable=False, leave=False,
+                              mininterval=30.0, maxinterval=60.0)
+        else:
+            # Normal progress bar
+            progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", 
+                              mininterval=10.0, maxinterval=30.0)
         
         for step, batch in enumerate(progress_bar):
             # Move batch to device
@@ -149,13 +158,19 @@ class KoGPT2Trainer:
                 current_lr = self.scheduler.get_last_lr()[0]
                 self.learning_rates.append(current_lr)
                 
-            # Update progress bar
-            avg_loss = total_loss / (step + 1)
-            progress_bar.set_postfix({
-                'loss': f'{avg_loss:.4f}',
-                'lr': f'{self.scheduler.get_last_lr()[0]:.2e}'
-            })
-            
+            # Update progress bar only at logging intervals
+            if (step + 1) % self.config.logging_steps == 0:
+                avg_loss = total_loss / (step + 1)
+                progress_bar.set_postfix({
+                    'step': f'{step+1}/{len(train_loader)}',
+                    'loss': f'{avg_loss:.4f}',
+                    'lr': f'{self.scheduler.get_last_lr()[0]:.2e}'
+                })
+                
+                # Print periodic log only if not in quiet mode
+                if not self.config.quiet_mode:
+                    print(f"Step {step+1}/{len(train_loader)} - Loss: {avg_loss:.4f}, LR: {self.scheduler.get_last_lr()[0]:.2e}")
+                
         return total_loss / len(train_loader)
     
     def validate(self, val_loader: DataLoader) -> float:
@@ -164,7 +179,11 @@ class KoGPT2Trainer:
         total_loss = 0
         
         with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Validating"):
+            # Reduce validation logging frequency
+            progress_bar = tqdm(val_loader, desc="Validating",
+                              mininterval=5.0, maxinterval=15.0)
+            
+            for step, batch in enumerate(progress_bar):
                 input_ids = batch['input_ids'].to(self.device)
                 attention_mask = batch['attention_mask'].to(self.device)
                 labels = batch['labels'].to(self.device)
@@ -176,6 +195,11 @@ class KoGPT2Trainer:
                 )
                 
                 total_loss += outputs.loss.item()
+                
+                # Update progress less frequently
+                if (step + 1) % 100 == 0 or step == len(val_loader) - 1:
+                    avg_loss = total_loss / (step + 1)
+                    progress_bar.set_postfix({'val_loss': f'{avg_loss:.4f}'})
         
         return total_loss / len(val_loader)
     

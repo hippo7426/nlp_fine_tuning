@@ -32,6 +32,12 @@ def parse_arguments():
     parser.add_argument('--cpu', action='store_true', default=False,
                       help='Force CPU usage')
     
+    # A100 optimization
+    parser.add_argument('--a100-optimized', action='store_true', default=False,
+                      help='Use A100 optimized settings (larger batch size, mixed precision)')
+    parser.add_argument('--mixed-precision', action='store_true', default=False,
+                      help='Enable mixed precision training')
+    
     # Training parameters
     parser.add_argument('--epochs', type=int, default=3,
                       help='Number of training epochs (default: 3)')
@@ -41,6 +47,10 @@ def parse_arguments():
                       help='Batch size (default: 4)')
     parser.add_argument('--max-length', type=int, default=512,
                       help='Maximum sequence length (default: 512)')
+    
+    # Logging
+    parser.add_argument('--quiet', action='store_true', default=False,
+                      help='Quiet mode with minimal logging')
     
     # Model
     parser.add_argument('--model-name', type=str, default='skt/kogpt2-base-v2',
@@ -82,6 +92,22 @@ def main():
     config.batch_size = args.batch_size
     config.max_length = args.max_length
     config.model_name = args.model_name
+    
+    # Logging settings
+    config.quiet_mode = args.quiet
+    
+    # A100 optimization settings
+    if args.a100_optimized:
+        print("🚀 A100 optimization enabled!")
+        config.batch_size = 16  # Increase batch size for A100
+        config.use_mixed_precision = True
+        config.dataloader_num_workers = 4
+        print(f"   - Batch size increased to {config.batch_size}")
+        print(f"   - Mixed precision enabled")
+        print(f"   - DataLoader workers: {config.dataloader_num_workers}")
+    
+    if args.mixed_precision:
+        config.use_mixed_precision = True
     
     # Print configuration
     print("Configuration:")
