@@ -1,0 +1,66 @@
+import os
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class TrainingConfig:
+    # Model settings
+    model_name: str = "skt/kogpt2-base-v2"
+    max_length: int = 512
+    
+    # Training settings
+    num_epochs: int = 3
+    batch_size: int = 4
+    gradient_accumulation_steps: int = 4
+    learning_rate: float = 5e-5
+    warmup_steps: int = 100
+    weight_decay: float = 0.01
+    
+    # Fine-tuning strategy
+    full_finetuning: bool = True  # True for full, False for head-only
+    freeze_layers: int = 0  # Number of layers to freeze from bottom (only used if full_finetuning=False)
+    
+    # Data settings
+    train_ratio: float = 0.8
+    validation_ratio: float = 0.1
+    test_ratio: float = 0.1
+    data_path: str = "data/prompt_dataset.json"
+    
+    # Special tokens
+    topic_start_token: str = "<|topic:"
+    topic_end_token: str = "|>"
+    
+    # GPU settings
+    use_gpu: bool = True
+    device: str = "cuda" if use_gpu else "cpu"
+    
+    # Output settings
+    output_dir: str = "outputs"
+    model_save_dir: str = "saved_models"
+    logs_dir: str = "logs"
+    
+    # Evaluation settings
+    eval_steps: int = 500
+    save_steps: int = 1000
+    logging_steps: int = 100
+    
+    # Generation settings for testing
+    max_new_tokens: int = 200
+    temperature: float = 0.8
+    top_k: int = 50
+    top_p: float = 0.9
+    do_sample: bool = True
+    
+    def __post_init__(self):
+        # Create directories if they don't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.model_save_dir, exist_ok=True)
+        os.makedirs(self.logs_dir, exist_ok=True)
+        
+        # Check GPU availability
+        if self.use_gpu:
+            import torch
+            if not torch.cuda.is_available():
+                print("Warning: CUDA not available, switching to CPU")
+                self.device = "cpu"
+                self.use_gpu = False 
