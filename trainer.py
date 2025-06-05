@@ -410,8 +410,12 @@ class KoGPT2Trainer:
         """Load saved model."""
         print(f"Loading model from {path}")
         
-        # Load tokenizer
+        # Load tokenizer first
         self.tokenizer = AutoTokenizer.from_pretrained(path)
+        
+        # Re-setup special tokens to ensure consistency
+        from data_utils import setup_tokenizer
+        self.tokenizer = setup_tokenizer(self.config, self.tokenizer)
         
         # Check if it's a LoRA model by checking for adapter files
         adapter_config_path = os.path.join(path, "adapter_config.json")
@@ -421,15 +425,36 @@ class KoGPT2Trainer:
             print("Loading LoRA model...")
             # First load base model
             base_model = AutoModelForCausalLM.from_pretrained(self.config.model_name)
+            
+            # Resize base model embeddings if needed
+            if len(self.tokenizer) != base_model.get_input_embeddings().num_embeddings:
+                print(f"Resizing base model embeddings from {base_model.get_input_embeddings().num_embeddings} to {len(self.tokenizer)}")
+                base_model.resize_token_embeddings(len(self.tokenizer))
+            
             # Then load LoRA adapter
             self.model = PeftModel.from_pretrained(base_model, path)
         else:
             # Load full model
             print("Loading full model...")
             self.model = AutoModelForCausalLM.from_pretrained(path)
+            
+            # Check and resize embeddings if needed
+            if len(self.tokenizer) != self.model.get_input_embeddings().num_embeddings:
+                print(f"Resizing model embeddings from {self.model.get_input_embeddings().num_embeddings} to {len(self.tokenizer)}")
+                self.model.resize_token_embeddings(len(self.tokenizer))
         
         self.model.to(self.device)
         
+        # Verify tokenizer and model compatibility
+        print(f"✅ Model and tokenizer loaded successfully")
+        print(f"   Tokenizer vocab size: {len(self.tokenizer)}")
+        print(f"   Model embedding size: {self.model.get_input_embeddings().num_embeddings}")
+        
+        # Check special tokens
+        print(f"   Special tokens: {self.tokenizer.special_tokens_map}")
+        if hasattr(self.tokenizer, 'added_tokens_encoder'):
+            print(f"   Added tokens: {list(self.tokenizer.added_tokens_encoder.keys())}")
+    
     def plot_training_history(self):
         """Plot training and validation losses."""
         plt.figure(figsize=(12, 4))
@@ -458,33 +483,73 @@ class KoGPT2Trainer:
         """Generate a poem for the given topic."""
         self.model.eval()
         
-        # Prepare input
-        from data_utils import prepare_input_text, extract_generated_poem
-        prompt = prepare_input_text(topic, self.config)
-        
-        # Tokenize
-        inputs = self.tokenizer(
-            prompt,
-            return_tensors='pt',
-            truncation=True,
-            max_length=self.config.max_length
-        ).to(self.device)
-        
-        # Generate
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=self.config.max_new_tokens,
-                temperature=self.config.temperature,
-                top_k=self.config.top_k,
-                top_p=self.config.top_p,
-                do_sample=self.config.do_sample,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id
-            )
-        
-        # Decode and extract poem
-        generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
-        poem = extract_generated_poem(generated_text, prompt)
-        
-        return poem 
+        try:
+            # Prepare input
+            from data_utils import prepare_input_text, extract_generated_poem
+            prompt = prepare_input_text(topic, self.config)
+            
+            print(f"🎯 Generating poem for topic: '{topic}'")
+            print(f"📝 Prompt: '{prompt.strip()}'")
+            
+            # Tokenize
+            inputs = self.tokenizer(
+                prompt,
+                return_tensors='pt',
+                truncation=True,
+                max_length=self.config.max_length
+            ).to(self.device)
+            
+            print(f"🔧 Input tokens: {inputs['input_ids'].shape}")
+            print(f"🔧 Device: {self.device}")
+            
+            # Generate
+            with torch.no_grad():
+                # LoRA 모델의 경우 특별한 처리
+                if hasattr(self.model, 'base_model'):
+                    # LoRA model
+                    print("🎛️ Using LoRA model for generation")
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=self.config.max_new_tokens,
+                        temperature=self.config.temperature,
+                        top_k=self.config.top_k,
+                        top_p=self.config.top_p,
+                        do_sample=self.config.do_sample,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        repetition_penalty=1.1  # LoRA에서 반복 방지
+                    )
+                else:
+                    # Regular model
+                    print("🤖 Using full model for generation")
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=self.config.max_new_tokens,
+                        temperature=self.config.temperature,
+                        top_k=self.config.top_k,
+                        top_p=self.config.top_p,
+                        do_sample=self.config.do_sample,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id
+                    )
+            
+            print(f"✅ Generation completed. Output tokens: {outputs.shape}")
+            
+            # Decode and extract poem
+            generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
+            poem = extract_generated_poem(generated_text, prompt)
+            
+            print(f"📖 Generated text length: {len(generated_text)} chars")
+            print(f"🎭 Extracted poem length: {len(poem)} chars")
+            
+            return poem
+            
+        except Exception as e:
+            print(f"❌ Error during poem generation: {e}")
+            print(f"   Model type: {type(self.model)}")
+            print(f"   Tokenizer vocab size: {len(self.tokenizer)}")
+            print(f"   Model embedding size: {self.model.get_input_embeddings().num_embeddings}")
+            
+            # 간단한 fallback 생성
+            fallback_poem = f"죄송합니다. '{topic}' 주제로 시를 생성하는 중 오류가 발생했습니다.\n오류: {str(e)}"
+            return fallback_poem 

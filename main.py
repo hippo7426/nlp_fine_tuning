@@ -205,6 +205,10 @@ def main():
                 print("No trained model found. Please run training first or provide --model-path")
                 return
         
+        # Ensure tokenizer is set up if not already done
+        if not hasattr(trainer, 'tokenizer') or trainer.tokenizer is None:
+            trainer.setup_model_and_tokenizer()
+        
         # Evaluate model
         results = evaluate_model(trainer.model, trainer.tokenizer, test_data, config)
         
@@ -228,10 +232,24 @@ def main():
                 print("No trained model found. Please run training first or provide --model-path")
                 return
         
+        # Ensure tokenizer is set up if not already done
+        if not hasattr(trainer, 'tokenizer') or trainer.tokenizer is None:
+            trainer.setup_model_and_tokenizer()
+        
         # Test poem generation
         test_topics = ["자연", "사랑", "그리움", "가을", "달빛"]
         
         print("Generated poems:")
+        print("=" * 50)
+        
+        # Print model and tokenizer info
+        print(f"🤖 Model info:")
+        print(f"   Type: {type(trainer.model)}")
+        print(f"   Device: {trainer.model.device if hasattr(trainer.model, 'device') else 'Unknown'}")
+        print(f"   Embedding size: {trainer.model.get_input_embeddings().num_embeddings}")
+        print(f"🔤 Tokenizer info:")
+        print(f"   Vocab size: {len(trainer.tokenizer)}")
+        print(f"   Special tokens: {trainer.tokenizer.special_tokens_map}")
         print("=" * 50)
         
         for topic in test_topics:
@@ -242,6 +260,8 @@ def main():
                 print(poem)
             except Exception as e:
                 print(f"Error generating poem: {e}")
+                import traceback
+                traceback.print_exc()
             print("-" * 30)
         
         # Interactive generation
