@@ -1,6 +1,6 @@
 import os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 @dataclass
 class TrainingConfig:
@@ -21,8 +21,15 @@ class TrainingConfig:
     dataloader_num_workers: int = 4   # Increase for A100
     
     # Fine-tuning strategy
-    full_finetuning: bool = True  # True for full, False for head-only
-    trainable_layers: int = 0  # Number of top transformer layers to keep trainable (only used if full_finetuning=False)
+    full_finetuning: bool = True
+    trainable_layers: int = 0  # Number of top layers to keep trainable in head-only mode
+    
+    # LoRA settings
+    use_lora: bool = False
+    lora_r: int = 16  # LoRA rank
+    lora_alpha: int = 32  # LoRA scaling parameter
+    lora_dropout: float = 0.1  # LoRA dropout
+    lora_target_modules: List[str] = field(default_factory=lambda: ["c_attn", "c_proj"])  # Target modules for LoRA
     
     # Data settings
     train_ratio: float = 0.8

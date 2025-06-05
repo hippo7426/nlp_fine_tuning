@@ -8,6 +8,7 @@ from transformers import (
     get_linear_schedule_with_warmup
 )
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
+from peft import LoraConfig, get_peft_model, TaskType, PeftModel
 import os
 import time
 from typing import Dict, List, Optional, Tuple
@@ -55,11 +56,15 @@ class KoGPT2Trainer:
             print(f"Resizing model embeddings from {self.model.get_input_embeddings().num_embeddings} to {len(self.tokenizer)}")
             self.model.resize_token_embeddings(len(self.tokenizer))
         
+        # Apply LoRA if enabled
+        if self.config.use_lora:
+            self._setup_lora()
+        else:
+            # Configure fine-tuning strategy (only if not using LoRA)
+            self._setup_finetuning_strategy()
+        
         # Move model to device
         self.model.to(self.device)
-        
-        # Configure fine-tuning strategy
-        self._setup_finetuning_strategy()
         
         print(f"Model loaded and configured. Total parameters: {self.count_parameters():,}")
         
@@ -101,6 +106,36 @@ class KoGPT2Trainer:
             print("Using full fine-tuning...")
             total_params = sum(p.numel() for p in self.model.parameters())
             print(f"All {total_params:,} parameters are trainable")
+        
+    def _setup_lora(self):
+        """Setup LoRA configuration."""
+        print("Setting up LoRA fine-tuning...")
+        
+        # Configure LoRA
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=self.config.lora_r,
+            lora_alpha=self.config.lora_alpha,
+            lora_dropout=self.config.lora_dropout,
+            target_modules=self.config.lora_target_modules,
+            bias="none",
+        )
+        
+        # Apply LoRA to the model
+        self.model = get_peft_model(self.model, lora_config)
+        
+        # Print LoRA information
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        print(f"LoRA configuration:")
+        print(f"  - Rank: {self.config.lora_r}")
+        print(f"  - Alpha: {self.config.lora_alpha}")
+        print(f"  - Dropout: {self.config.lora_dropout}")
+        print(f"  - Target modules: {self.config.lora_target_modules}")
+        print(f"  - Total parameters: {total_params:,}")
+        print(f"  - Trainable parameters: {trainable_params:,}")
+        print(f"  - Trainable ratio: {100 * trainable_params / total_params:.2f}%")
         
     def count_parameters(self) -> int:
         """Count trainable parameters."""
@@ -277,7 +312,17 @@ class KoGPT2Trainer:
         save_path = os.path.join(self.config.model_save_dir, name)
         os.makedirs(save_path, exist_ok=True)
         
-        self.model.save_pretrained(save_path)
+        # Save model (LoRA or full model)
+        if self.config.use_lora:
+            # Save LoRA adapter
+            self.model.save_pretrained(save_path)
+            # Also save base model config
+            self.model.base_model.model.config.save_pretrained(save_path)
+        else:
+            # Save full model
+            self.model.save_pretrained(save_path)
+        
+        # Save tokenizer
         self.tokenizer.save_pretrained(save_path)
         
         # Save training configuration and arguments
@@ -319,8 +364,24 @@ class KoGPT2Trainer:
         """Load saved model."""
         print(f"Loading model from {path}")
         
+        # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(path)
-        self.model = AutoModelForCausalLM.from_pretrained(path)
+        
+        # Check if it's a LoRA model by checking for adapter files
+        adapter_config_path = os.path.join(path, "adapter_config.json")
+        
+        if os.path.exists(adapter_config_path):
+            # Load LoRA model
+            print("Loading LoRA model...")
+            # First load base model
+            base_model = AutoModelForCausalLM.from_pretrained(self.config.model_name)
+            # Then load LoRA adapter
+            self.model = PeftModel.from_pretrained(base_model, path)
+        else:
+            # Load full model
+            print("Loading full model...")
+            self.model = AutoModelForCausalLM.from_pretrained(path)
+        
         self.model.to(self.device)
         
     def plot_training_history(self):

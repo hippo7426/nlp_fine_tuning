@@ -28,6 +28,18 @@ def parse_arguments():
     parser.add_argument('--trainable-layers', type=int, default=0,
                       help='Number of top transformer layers to keep trainable in head-only mode (default: 0)')
     
+    # LoRA settings
+    parser.add_argument('--lora', action='store_true', default=False,
+                      help='Use LoRA (Low-Rank Adaptation) fine-tuning')
+    parser.add_argument('--lora-r', type=int, default=16,
+                      help='LoRA rank (default: 16)')
+    parser.add_argument('--lora-alpha', type=int, default=32,
+                      help='LoRA scaling parameter (default: 32)')
+    parser.add_argument('--lora-dropout', type=float, default=0.1,
+                      help='LoRA dropout rate (default: 0.1)')
+    parser.add_argument('--lora-target-modules', nargs='+', default=['c_attn', 'c_proj'],
+                      help='Target modules for LoRA (default: c_attn c_proj)')
+    
     # Hardware
     parser.add_argument('--gpu', action='store_true', default=True,
                       help='Use GPU if available (default: True)')
@@ -85,6 +97,13 @@ def main():
     
     config.trainable_layers = args.trainable_layers
     
+    # LoRA settings
+    config.use_lora = args.lora
+    config.lora_r = args.lora_r
+    config.lora_alpha = args.lora_alpha
+    config.lora_dropout = args.lora_dropout
+    config.lora_target_modules = args.lora_target_modules
+    
     if args.cpu:
         config.use_gpu = False
         config.device = 'cpu'
@@ -103,10 +122,14 @@ def main():
     # A100 optimization settings
     if args.a100_optimized:
         print("🚀 A100 optimization enabled!")
-        config.batch_size = 16  # Increase batch size for A100
+        if config.use_lora:
+            config.batch_size = 32  # LoRA는 메모리를 적게 사용하므로 더 큰 배치 사이즈 가능
+            print(f"   - LoRA detected: Batch size increased to {config.batch_size}")
+        else:
+            config.batch_size = 16  # Increase batch size for A100
+            print(f"   - Batch size increased to {config.batch_size}")
         config.use_mixed_precision = True
         config.dataloader_num_workers = 4
-        print(f"   - Batch size increased to {config.batch_size}")
         print(f"   - Mixed precision enabled")
         print(f"   - DataLoader workers: {config.dataloader_num_workers}")
     
@@ -121,6 +144,12 @@ def main():
     print(f"- Model: {config.model_name}")
     print(f"- Device: {config.device}")
     print(f"- Full fine-tuning: {config.full_finetuning}")
+    print(f"- Use LoRA: {config.use_lora}")
+    if config.use_lora:
+        print(f"- LoRA rank: {config.lora_r}")
+        print(f"- LoRA alpha: {config.lora_alpha}")
+        print(f"- LoRA dropout: {config.lora_dropout}")
+        print(f"- LoRA target modules: {config.lora_target_modules}")
     print(f"- Epochs: {config.num_epochs}")
     print(f"- Learning rate: {config.learning_rate}")
     print(f"- Batch size: {config.batch_size}")
