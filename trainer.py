@@ -65,18 +65,40 @@ class KoGPT2Trainer:
         if not self.config.full_finetuning:
             print("Setting up head-only fine-tuning...")
             
-            # Freeze transformer layers
+            total_layers = len(self.model.transformer.h)
+            trainable_layers = self.config.trainable_layers
+            frozen_layers = total_layers - trainable_layers
+            
+            print(f"Total transformer layers: {total_layers}")
+            print(f"Trainable layers (top): {trainable_layers}")
+            print(f"Frozen layers (bottom): {frozen_layers}")
+            
+            # Freeze transformer layers (keep only top N layers trainable)
             for name, param in self.model.named_parameters():
                 if 'transformer.h' in name:
                     # Extract layer number
                     layer_num = int(name.split('.')[2])
-                    if layer_num < (len(self.model.transformer.h) - self.config.freeze_layers):
+                    if layer_num < frozen_layers:  # Freeze bottom layers
                         param.requires_grad = False
                         
-            print(f"Frozen {len(self.model.transformer.h) - self.config.freeze_layers} layers")
+            # Count what's actually trainable
+            trainable_transformer_params = 0
+            frozen_transformer_params = 0
+            for name, param in self.model.named_parameters():
+                if 'transformer.h' in name:
+                    if param.requires_grad:
+                        trainable_transformer_params += param.numel()
+                    else:
+                        frozen_transformer_params += param.numel()
+            
+            print(f"Frozen transformer parameters: {frozen_transformer_params:,}")
+            print(f"Trainable transformer parameters: {trainable_transformer_params:,}")
+                        
         else:
             print("Using full fine-tuning...")
-            
+            total_params = sum(p.numel() for p in self.model.parameters())
+            print(f"All {total_params:,} parameters are trainable")
+        
     def count_parameters(self) -> int:
         """Count trainable parameters."""
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)

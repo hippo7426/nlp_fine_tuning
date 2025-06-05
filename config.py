@@ -22,7 +22,7 @@ class TrainingConfig:
     
     # Fine-tuning strategy
     full_finetuning: bool = True  # True for full, False for head-only
-    freeze_layers: int = 0  # Number of layers to freeze from bottom (only used if full_finetuning=False)
+    trainable_layers: int = 0  # Number of top transformer layers to keep trainable (only used if full_finetuning=False)
     
     # Data settings
     train_ratio: float = 0.8

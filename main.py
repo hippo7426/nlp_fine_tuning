@@ -25,6 +25,8 @@ def parse_arguments():
                       help='Use full fine-tuning (default: True)')
     parser.add_argument('--head-only', action='store_true', default=False,
                       help='Use head-only fine-tuning')
+    parser.add_argument('--trainable-layers', type=int, default=0,
+                      help='Number of top transformer layers to keep trainable in head-only mode (default: 0)')
     
     # Hardware
     parser.add_argument('--gpu', action='store_true', default=True,
@@ -80,7 +82,9 @@ def main():
         config.full_finetuning = False
     else:
         config.full_finetuning = args.full_finetuning
-        
+    
+    config.trainable_layers = args.trainable_layers
+    
     if args.cpu:
         config.use_gpu = False
         config.device = 'cpu'
