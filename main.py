@@ -113,6 +113,9 @@ def main():
     if args.mixed_precision:
         config.use_mixed_precision = True
     
+    # Store command line arguments in config for saving
+    config.command_line_args = vars(args)
+    
     # Print configuration
     print("Configuration:")
     print(f"- Model: {config.model_name}")

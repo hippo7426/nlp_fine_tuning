@@ -14,6 +14,9 @@ from typing import Dict, List, Optional, Tuple
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
+import json
+import datetime
+from dataclasses import asdict
 
 from config import TrainingConfig
 from data_utils import setup_tokenizer, create_dataloaders, load_and_preprocess_data
@@ -277,7 +280,40 @@ class KoGPT2Trainer:
         self.model.save_pretrained(save_path)
         self.tokenizer.save_pretrained(save_path)
         
+        # Save training configuration and arguments
+        config_dict = asdict(self.config)
+        
+        # Add additional training information
+        training_info = {
+            "training_config": config_dict,
+            "command_line_args": getattr(self.config, 'command_line_args', {}),
+            "model_info": {
+                "model_name": self.config.model_name,
+                "total_parameters": self.count_parameters(),
+                "vocab_size": len(self.tokenizer),
+                "max_length": self.config.max_length,
+            },
+            "training_history": {
+                "train_losses": self.train_losses,
+                "val_losses": self.val_losses,
+                "learning_rates": self.learning_rates[-10:] if self.learning_rates else [],  # Last 10 LR values
+                "final_train_loss": self.train_losses[-1] if self.train_losses else None,
+                "final_val_loss": self.val_losses[-1] if self.val_losses else None,
+                "best_val_loss": min(self.val_losses) if self.val_losses else None,
+            },
+            "timestamp": {
+                "saved_at": datetime.datetime.now().isoformat(),
+                "model_type": name,
+            }
+        }
+        
+        # Save training arguments
+        training_args_path = os.path.join(save_path, "training_args.json")
+        with open(training_args_path, 'w', encoding='utf-8') as f:
+            json.dump(training_info, f, indent=2, ensure_ascii=False)
+        
         print(f"Model saved to {save_path}")
+        print(f"Training arguments saved to {training_args_path}")
     
     def load_model(self, path: str):
         """Load saved model."""
