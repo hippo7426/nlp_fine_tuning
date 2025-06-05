@@ -179,12 +179,10 @@ class KoGPT2Trainer:
                 {
                     'params': [p for n, p in lora_params if not any(nd in n for nd in no_decay)],
                     'weight_decay': self.config.weight_decay,
-                    'lr': self.config.learning_rate * 1.5  # LoRA 파라미터에는 1.5배 학습률
                 },
                 {
                     'params': [p for n, p in lora_params if any(nd in n for nd in no_decay)],
                     'weight_decay': 0.0,
-                    'lr': self.config.learning_rate * 1.5
                 },
                 {
                     'params': [p for n, p in base_params if not any(nd in n for nd in no_decay)],
@@ -195,7 +193,6 @@ class KoGPT2Trainer:
                     'weight_decay': 0.0
                 }
             ]
-            print(f"💡 LoRA 최적화: LoRA 파라미터에 {self.config.learning_rate * 1.5:.0e} 학습률 적용")
         else:
             optimizer_grouped_parameters = [
                 {

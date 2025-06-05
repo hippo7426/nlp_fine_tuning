@@ -110,7 +110,7 @@ def main():
     if config.use_lora:
         # LoRA는 일반적으로 더 높은 학습률이 필요함
         if args.lr == 5e-5:  # 기본값인 경우에만 자동 조정
-            config.learning_rate = 1e-4  # 2배 증가
+            config.learning_rate = 5e-4  # 10배 증가
             print(f"🎯 LoRA 최적화: 학습률을 {config.learning_rate:.0e}로 자동 증가")
         
         # warmup 단계도 늘려서 안정적인 학습
