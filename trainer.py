@@ -137,6 +137,17 @@ class KoGPT2Trainer:
         print(f"  - Trainable parameters: {trainable_params:,}")
         print(f"  - Trainable ratio: {100 * trainable_params / total_params:.2f}%")
         
+        # 성능 최적화 팁
+        print(f"\n💡 LoRA 최적화 팁:")
+        if self.config.lora_r < 32:
+            print(f"  ⚠️  낮은 rank({self.config.lora_r}) 감지. 성능 향상을 위해 --lora-r 32 이상 권장")
+        if self.config.lora_alpha / self.config.lora_r < 2:
+            print(f"  ⚠️  alpha/rank 비율이 낮음. --lora-alpha {self.config.lora_r * 2} 권장")
+        if len(self.config.lora_target_modules) < 3:
+            print(f"  💡 더 많은 모듈 적용 권장: --lora-target-modules c_attn c_proj c_fc")
+        
+        print(f"  ✅ 현재 설정으로 약 {100 * trainable_params / total_params:.1f}%의 파라미터 학습")
+        
     def count_parameters(self) -> int:
         """Count trainable parameters."""
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -149,21 +160,59 @@ class KoGPT2Trainer:
         param_optimizer = list(self.model.named_parameters())
         no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
         
-        optimizer_grouped_parameters = [
-            {
-                'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)],
-                'weight_decay': self.config.weight_decay
-            },
-            {
-                'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)],
-                'weight_decay': 0.0
-            }
-        ]
+        # LoRA 특별 처리: LoRA 파라미터와 일반 파라미터를 분리
+        if self.config.use_lora:
+            lora_params = []
+            base_params = []
+            
+            for name, param in param_optimizer:
+                if param.requires_grad:
+                    if 'lora_' in name:
+                        lora_params.append((name, param))
+                    else:
+                        base_params.append((name, param))
+            
+            print(f"LoRA parameters: {len(lora_params)}, Base parameters: {len(base_params)}")
+            
+            # LoRA 파라미터에는 더 높은 학습률 적용
+            optimizer_grouped_parameters = [
+                {
+                    'params': [p for n, p in lora_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay,
+                    'lr': self.config.learning_rate * 1.5  # LoRA 파라미터에는 1.5배 학습률
+                },
+                {
+                    'params': [p for n, p in lora_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0,
+                    'lr': self.config.learning_rate * 1.5
+                },
+                {
+                    'params': [p for n, p in base_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay
+                },
+                {
+                    'params': [p for n, p in base_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0
+                }
+            ]
+            print(f"💡 LoRA 최적화: LoRA 파라미터에 {self.config.learning_rate * 1.5:.0e} 학습률 적용")
+        else:
+            optimizer_grouped_parameters = [
+                {
+                    'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay
+                },
+                {
+                    'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0
+                }
+            ]
         
         self.optimizer = AdamW(
             optimizer_grouped_parameters,
             lr=self.config.learning_rate,
-            eps=1e-8
+            eps=1e-8,
+            betas=(0.9, 0.95) if self.config.use_lora else (0.9, 0.999)  # LoRA에 최적화된 beta값
         )
         
         self.scheduler = get_linear_schedule_with_warmup(

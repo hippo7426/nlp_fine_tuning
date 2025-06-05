@@ -31,14 +31,14 @@ def parse_arguments():
     # LoRA settings
     parser.add_argument('--lora', action='store_true', default=False,
                       help='Use LoRA (Low-Rank Adaptation) fine-tuning')
-    parser.add_argument('--lora-r', type=int, default=16,
-                      help='LoRA rank (default: 16)')
-    parser.add_argument('--lora-alpha', type=int, default=32,
-                      help='LoRA scaling parameter (default: 32)')
-    parser.add_argument('--lora-dropout', type=float, default=0.1,
-                      help='LoRA dropout rate (default: 0.1)')
-    parser.add_argument('--lora-target-modules', nargs='+', default=['c_attn', 'c_proj'],
-                      help='Target modules for LoRA (default: c_attn c_proj)')
+    parser.add_argument('--lora-r', type=int, default=32,
+                      help='LoRA rank (default: 32)')
+    parser.add_argument('--lora-alpha', type=int, default=64,
+                      help='LoRA scaling parameter (default: 64)')
+    parser.add_argument('--lora-dropout', type=float, default=0.05,
+                      help='LoRA dropout rate (default: 0.05)')
+    parser.add_argument('--lora-target-modules', nargs='+', default=['c_attn', 'c_proj', 'c_fc'],
+                      help='Target modules for LoRA (default: c_attn c_proj c_fc)')
     
     # Hardware
     parser.add_argument('--gpu', action='store_true', default=True,
@@ -104,6 +104,17 @@ def main():
     config.lora_dropout = args.lora_dropout
     config.lora_target_modules = args.lora_target_modules
     
+    # LoRA optimization: 자동으로 학습률 조정
+    if config.use_lora:
+        # LoRA는 일반적으로 더 높은 학습률이 필요함
+        if args.lr == 5e-5:  # 기본값인 경우에만 자동 조정
+            config.learning_rate = 1e-4  # 2배 증가
+            print(f"🎯 LoRA 최적화: 학습률을 {config.learning_rate:.0e}로 자동 증가")
+        
+        # warmup 단계도 늘려서 안정적인 학습
+        config.warmup_steps = 200  # 100 -> 200으로 증가
+        print(f"🎯 LoRA 최적화: warmup steps를 {config.warmup_steps}로 증가")
+    
     if args.cpu:
         config.use_gpu = False
         config.device = 'cpu'
@@ -123,8 +134,12 @@ def main():
     if args.a100_optimized:
         print("🚀 A100 optimization enabled!")
         if config.use_lora:
-            config.batch_size = 32  # LoRA는 메모리를 적게 사용하므로 더 큰 배치 사이즈 가능
-            print(f"   - LoRA detected: Batch size increased to {config.batch_size}")
+            config.batch_size = 64  # LoRA는 메모리를 적게 사용하므로 더 큰 배치 사이즈 가능
+            print(f"   - LoRA + A100: Batch size increased to {config.batch_size}")
+            # LoRA + A100 조합에서는 더 적극적인 학습률 적용
+            if args.lr == 5e-5:  # 기본값인 경우
+                config.learning_rate = 2e-4  # 더 높은 학습률
+                print(f"   - LoRA + A100: Learning rate increased to {config.learning_rate:.0e}")
         else:
             config.batch_size = 16  # Increase batch size for A100
             print(f"   - Batch size increased to {config.batch_size}")

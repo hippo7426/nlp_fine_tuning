@@ -26,10 +26,10 @@ class TrainingConfig:
     
     # LoRA settings
     use_lora: bool = False
-    lora_r: int = 16  # LoRA rank
-    lora_alpha: int = 32  # LoRA scaling parameter
-    lora_dropout: float = 0.1  # LoRA dropout
-    lora_target_modules: List[str] = field(default_factory=lambda: ["c_attn", "c_proj"])  # Target modules for LoRA
+    lora_r: int = 32  # LoRA rank
+    lora_alpha: int = 64  # LoRA scaling parameter
+    lora_dropout: float = 0.05  # LoRA dropout
+    lora_target_modules: List[str] = field(default_factory=lambda: ["c_attn", "c_proj", "c_fc"])  # Target modules for LoRA
     
     # Data settings
     train_ratio: float = 0.8
