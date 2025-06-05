@@ -96,6 +96,8 @@ def main():
         config.full_finetuning = args.full_finetuning
     
     config.trainable_layers = args.trainable_layers
+    config.learning_rate = args.lr
+
     
     # LoRA settings
     config.use_lora = args.lora
@@ -122,7 +124,6 @@ def main():
         config.use_gpu = args.gpu
         
     config.num_epochs = args.epochs
-    config.learning_rate = args.lr
     config.batch_size = args.batch_size
     config.max_length = args.max_length
     config.model_name = args.model_name
