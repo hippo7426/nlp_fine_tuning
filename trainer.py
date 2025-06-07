@@ -438,7 +438,7 @@ class KoGPT2Trainer:
             # Save PEFT adapter
             self.model.save_pretrained(save_path)
             # Also save base model config
-            self.model.base_model.model.config.save_pretrained(save_path)
+            self.model.base_model.config.save_pretrained(save_path)
         else:
             # Save full model
             self.model.save_pretrained(save_path)
