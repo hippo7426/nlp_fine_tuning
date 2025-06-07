@@ -158,11 +158,11 @@ class KoGPT2Trainer:
         prefix_config = PrefixTuningConfig(
             task_type=TaskType.CAUSAL_LM,
             num_virtual_tokens=self.config.prefix_length,
-            token_dim=self.config.prefix_hidden_size or self.model.config.hidden_size,
-            num_transformer_submodules=2,  # attention과 mlp
+            token_dim=self.model.config.hidden_size,
+            num_transformer_submodules=1,  # attention layer only
             num_attention_heads=self.model.config.num_attention_heads,
             num_layers=self.model.config.num_hidden_layers,
-            encoder_hidden_size=self.config.prefix_hidden_size or self.model.config.hidden_size,
+            encoder_hidden_size=self.model.config.hidden_size,
             prefix_projection=True  # MLP를 사용한 prefix projection 활성화
         )
         
