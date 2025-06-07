@@ -40,6 +40,16 @@ def parse_arguments():
     parser.add_argument('--lora-target-modules', nargs='+', default=['c_attn', 'c_proj', 'c_fc'],
                       help='Target modules for LoRA (default: c_attn c_proj c_fc)')
     
+    # Prefix-tuning settings
+    parser.add_argument('--prefix-tuning', action='store_true', default=False,
+                      help='Use Prefix-tuning fine-tuning')
+    parser.add_argument('--prefix-length', type=int, default=30,
+                      help='Number of prefix tokens (default: 30)')
+    parser.add_argument('--prefix-dropout', type=float, default=0.1,
+                      help='Prefix dropout rate (default: 0.1)')
+    parser.add_argument('--prefix-hidden-size', type=int, default=None,
+                      help='Prefix hidden size (default: model hidden size)')
+    
     # Hardware
     parser.add_argument('--gpu', action='store_true', default=True,
                       help='Use GPU if available (default: True)')
@@ -106,7 +116,13 @@ def main():
     config.lora_dropout = args.lora_dropout
     config.lora_target_modules = args.lora_target_modules
     
-    # LoRA optimization: 자동으로 학습률 조정
+    # Prefix-tuning settings
+    config.use_prefix_tuning = args.prefix_tuning
+    config.prefix_length = args.prefix_length
+    config.prefix_dropout = args.prefix_dropout
+    config.prefix_hidden_size = args.prefix_hidden_size
+    
+    # PEFT techniques optimization
     if config.use_lora:
         # LoRA는 일반적으로 더 높은 학습률이 필요함
         if args.lr == 5e-5:  # 기본값인 경우에만 자동 조정
@@ -116,6 +132,21 @@ def main():
         # warmup 단계도 늘려서 안정적인 학습
         config.warmup_steps = 200  # 100 -> 200으로 증가
         print(f"🎯 LoRA 최적화: warmup steps를 {config.warmup_steps}로 증가")
+    
+    if config.use_prefix_tuning:
+        # Prefix-tuning은 더 낮은 학습률이 안정적임
+        if args.lr == 5e-5:  # 기본값인 경우에만 자동 조정
+            config.learning_rate = 1e-4  # 2배 증가 (LoRA보다 보수적)
+            print(f"🎯 Prefix-tuning 최적화: 학습률을 {config.learning_rate:.0e}로 자동 증가")
+        
+        # warmup 단계 증가
+        config.warmup_steps = 150  # 100 -> 150으로 증가
+        print(f"🎯 Prefix-tuning 최적화: warmup steps를 {config.warmup_steps}로 증가")
+    
+    # PEFT 기법 충돌 체크
+    if config.use_lora and config.use_prefix_tuning:
+        print("⚠️ 경고: LoRA와 Prefix-tuning을 동시에 사용할 수 없습니다. LoRA만 사용합니다.")
+        config.use_prefix_tuning = False
     
     if args.cpu:
         config.use_gpu = False
@@ -141,6 +172,13 @@ def main():
             if args.lr == 5e-5:  # 기본값인 경우
                 config.learning_rate = 2e-4  # 더 높은 학습률
                 print(f"   - LoRA + A100: Learning rate increased to {config.learning_rate:.0e}")
+        elif config.use_prefix_tuning:
+            config.batch_size = 32  # Prefix-tuning도 메모리 효율적
+            print(f"   - Prefix-tuning + A100: Batch size increased to {config.batch_size}")
+            # Prefix-tuning + A100 조합에서는 보수적인 학습률 적용
+            if args.lr == 5e-5:  # 기본값인 경우
+                config.learning_rate = 1.5e-4  # 보수적인 증가
+                print(f"   - Prefix-tuning + A100: Learning rate increased to {config.learning_rate:.0e}")
         else:
             config.batch_size = 16  # Increase batch size for A100
             print(f"   - Batch size increased to {config.batch_size}")
@@ -166,6 +204,11 @@ def main():
         print(f"- LoRA alpha: {config.lora_alpha}")
         print(f"- LoRA dropout: {config.lora_dropout}")
         print(f"- LoRA target modules: {config.lora_target_modules}")
+    print(f"- Use Prefix-tuning: {config.use_prefix_tuning}")
+    if config.use_prefix_tuning:
+        print(f"- Prefix length: {config.prefix_length}")
+        print(f"- Prefix dropout: {config.prefix_dropout}")
+        print(f"- Prefix hidden size: {config.prefix_hidden_size or 'model default'}")
     print(f"- Epochs: {config.num_epochs}")
     print(f"- Learning rate: {config.learning_rate}")
     print(f"- Batch size: {config.batch_size}")

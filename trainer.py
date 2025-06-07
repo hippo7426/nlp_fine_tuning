@@ -8,7 +8,7 @@ from transformers import (
     get_linear_schedule_with_warmup
 )
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
-from peft import LoraConfig, get_peft_model, TaskType, PeftModel
+from peft import LoraConfig, PrefixTuningConfig, get_peft_model, TaskType, PeftModel
 import os
 import time
 from typing import Dict, List, Optional, Tuple
@@ -56,11 +56,13 @@ class KoGPT2Trainer:
             print(f"Resizing model embeddings from {self.model.get_input_embeddings().num_embeddings} to {len(self.tokenizer)}")
             self.model.resize_token_embeddings(len(self.tokenizer))
         
-        # Apply LoRA if enabled
+        # Apply PEFT techniques if enabled
         if self.config.use_lora:
             self._setup_lora()
+        elif self.config.use_prefix_tuning:
+            self._setup_prefix_tuning()
         else:
-            # Configure fine-tuning strategy (only if not using LoRA)
+            # Configure fine-tuning strategy (only if not using PEFT)
             self._setup_finetuning_strategy()
         
         # Move model to device
@@ -148,6 +150,47 @@ class KoGPT2Trainer:
         
         print(f"  ✅ 현재 설정으로 약 {100 * trainable_params / total_params:.1f}%의 파라미터 학습")
         
+    def _setup_prefix_tuning(self):
+        """Setup Prefix-tuning configuration."""
+        print("Setting up Prefix-tuning fine-tuning...")
+        
+        # Configure Prefix-tuning
+        prefix_config = PrefixTuningConfig(
+            task_type=TaskType.CAUSAL_LM,
+            num_virtual_tokens=self.config.prefix_length,
+            token_dim=self.config.prefix_hidden_size or self.model.config.hidden_size,
+            num_transformer_submodules=2,  # attention과 mlp
+            num_attention_heads=self.model.config.num_attention_heads,
+            num_layers=self.model.config.num_hidden_layers,
+            encoder_hidden_size=self.config.prefix_hidden_size or self.model.config.hidden_size,
+            prefix_projection=True  # MLP를 사용한 prefix projection 활성화
+        )
+        
+        # Apply Prefix-tuning to the model
+        self.model = get_peft_model(self.model, prefix_config)
+        
+        # Print Prefix-tuning information
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        print(f"Prefix-tuning configuration:")
+        print(f"  - Virtual tokens: {self.config.prefix_length}")
+        print(f"  - Token dimension: {self.config.prefix_hidden_size or self.model.config.hidden_size}")
+        print(f"  - Prefix dropout: {self.config.prefix_dropout}")
+        print(f"  - Total parameters: {total_params:,}")
+        print(f"  - Trainable parameters: {trainable_params:,}")
+        print(f"  - Trainable ratio: {100 * trainable_params / total_params:.2f}%")
+        
+        # 성능 최적화 팁
+        print(f"\n💡 Prefix-tuning 최적화 팁:")
+        if self.config.prefix_length < 20:
+            print(f"  ⚠️  짧은 prefix 길이({self.config.prefix_length}) 감지. 성능 향상을 위해 --prefix-length 30 이상 권장")
+        elif self.config.prefix_length > 100:
+            print(f"  ⚠️  긴 prefix 길이({self.config.prefix_length}) 감지. 메모리 효율성을 위해 --prefix-length 50 이하 권장")
+        
+        print(f"  ✅ 현재 설정으로 약 {100 * trainable_params / total_params:.1f}%의 파라미터 학습")
+        print(f"  💾 Prefix-tuning은 LoRA보다 더 적은 메모리를 사용하며 빠른 학습이 가능합니다")
+        
     def count_parameters(self) -> int:
         """Count trainable parameters."""
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -160,7 +203,7 @@ class KoGPT2Trainer:
         param_optimizer = list(self.model.named_parameters())
         no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
         
-        # LoRA 특별 처리: LoRA 파라미터와 일반 파라미터를 분리
+        # PEFT 특별 처리: PEFT 파라미터와 일반 파라미터를 분리
         if self.config.use_lora:
             lora_params = []
             base_params = []
@@ -193,6 +236,38 @@ class KoGPT2Trainer:
                     'weight_decay': 0.0
                 }
             ]
+        elif self.config.use_prefix_tuning:
+            prefix_params = []
+            base_params = []
+            
+            for name, param in param_optimizer:
+                if param.requires_grad:
+                    if 'prefix' in name or 'prompt' in name:
+                        prefix_params.append((name, param))
+                    else:
+                        base_params.append((name, param))
+            
+            print(f"Prefix-tuning parameters: {len(prefix_params)}, Base parameters: {len(base_params)}")
+            
+            # Prefix-tuning 파라미터에는 적절한 학습률 적용
+            optimizer_grouped_parameters = [
+                {
+                    'params': [p for n, p in prefix_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay * 0.5,  # Prefix에는 더 낮은 weight decay
+                },
+                {
+                    'params': [p for n, p in prefix_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0,
+                },
+                {
+                    'params': [p for n, p in base_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay
+                },
+                {
+                    'params': [p for n, p in base_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0
+                }
+            ]
         else:
             optimizer_grouped_parameters = [
                 {
@@ -209,7 +284,7 @@ class KoGPT2Trainer:
             optimizer_grouped_parameters,
             lr=self.config.learning_rate,
             eps=1e-8,
-            betas=(0.9, 0.95) if self.config.use_lora else (0.9, 0.999)  # LoRA에 최적화된 beta값
+            betas=(0.9, 0.95) if (self.config.use_lora or self.config.use_prefix_tuning) else (0.9, 0.999)  # PEFT에 최적화된 beta값
         )
         
         self.scheduler = get_linear_schedule_with_warmup(
@@ -358,9 +433,9 @@ class KoGPT2Trainer:
         save_path = os.path.join(self.config.model_save_dir, name)
         os.makedirs(save_path, exist_ok=True)
         
-        # Save model (LoRA or full model)
-        if self.config.use_lora:
-            # Save LoRA adapter
+        # Save model (PEFT or full model)
+        if self.config.use_lora or self.config.use_prefix_tuning:
+            # Save PEFT adapter
             self.model.save_pretrained(save_path)
             # Also save base model config
             self.model.base_model.model.config.save_pretrained(save_path)
@@ -421,8 +496,13 @@ class KoGPT2Trainer:
         adapter_config_path = os.path.join(path, "adapter_config.json")
         
         if os.path.exists(adapter_config_path):
-            # Load LoRA model
-            print("Loading LoRA model...")
+            # Load PEFT model (LoRA or Prefix-tuning)
+            with open(adapter_config_path, 'r') as f:
+                import json
+                adapter_config = json.load(f)
+                peft_type = adapter_config.get('peft_type', 'LORA')
+                
+            print(f"Loading {peft_type} model...")
             # First load base model
             base_model = AutoModelForCausalLM.from_pretrained(self.config.model_name)
             
@@ -431,7 +511,7 @@ class KoGPT2Trainer:
                 print(f"Resizing base model embeddings from {base_model.get_input_embeddings().num_embeddings} to {len(self.tokenizer)}")
                 base_model.resize_token_embeddings(len(self.tokenizer))
             
-            # Then load LoRA adapter
+            # Then load PEFT adapter
             self.model = PeftModel.from_pretrained(base_model, path)
         else:
             # Load full model
@@ -504,21 +584,38 @@ class KoGPT2Trainer:
             
             # Generate
             with torch.no_grad():
-                # LoRA 모델의 경우 특별한 처리
+                # PEFT 모델의 경우 특별한 처리
                 if hasattr(self.model, 'base_model'):
-                    # LoRA model
-                    print("🎛️ Using LoRA model for generation")
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=self.config.max_new_tokens,
-                        temperature=self.config.temperature,
-                        top_k=self.config.top_k,
-                        top_p=self.config.top_p,
-                        do_sample=self.config.do_sample,
-                        pad_token_id=self.tokenizer.pad_token_id,
-                        eos_token_id=self.tokenizer.eos_token_id,
-                        repetition_penalty=1.1  # LoRA에서 반복 방지
-                    )
+                    # PEFT model (LoRA or Prefix-tuning)
+                    peft_type = "LoRA" if self.config.use_lora else "Prefix-tuning"
+                    print(f"🎛️ Using {peft_type} model for generation")
+                    
+                    # Prefix-tuning에 특화된 생성 파라미터
+                    if self.config.use_prefix_tuning:
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_new_tokens=self.config.max_new_tokens,
+                            temperature=self.config.temperature * 0.9,  # 약간 낮은 temperature
+                            top_k=self.config.top_k,
+                            top_p=self.config.top_p,
+                            do_sample=self.config.do_sample,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            eos_token_id=self.tokenizer.eos_token_id,
+                            repetition_penalty=1.05  # 적당한 반복 방지
+                        )
+                    else:
+                        # LoRA 모델
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_new_tokens=self.config.max_new_tokens,
+                            temperature=self.config.temperature,
+                            top_k=self.config.top_k,
+                            top_p=self.config.top_p,
+                            do_sample=self.config.do_sample,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            eos_token_id=self.tokenizer.eos_token_id,
+                            repetition_penalty=1.1  # LoRA에서 반복 방지
+                        )
                 else:
                     # Regular model
                     print("🤖 Using full model for generation")

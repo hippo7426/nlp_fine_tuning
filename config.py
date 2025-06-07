@@ -31,6 +31,12 @@ class TrainingConfig:
     lora_dropout: float = 0.05  # LoRA dropout
     lora_target_modules: List[str] = field(default_factory=lambda: ["c_attn", "c_proj", "c_fc"])  # Target modules for LoRA
     
+    # Prefix-tuning settings
+    use_prefix_tuning: bool = False
+    prefix_length: int = 30  # Number of prefix tokens
+    prefix_dropout: float = 0.1  # Prefix dropout rate
+    prefix_hidden_size: Optional[int] = None  # Prefix hidden size (None = model hidden size)
+    
     # Data settings
     train_ratio: float = 0.8
     validation_ratio: float = 0.1
