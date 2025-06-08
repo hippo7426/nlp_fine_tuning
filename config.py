@@ -37,6 +37,11 @@ class TrainingConfig:
     prefix_dropout: float = 0.1  # Prefix dropout rate
     prefix_hidden_size: Optional[int] = None  # Prefix hidden size (None = model hidden size)
     
+    # Adapter settings
+    use_adapter: bool = False
+    adapter_reduction_factor: int = 16  # Reduction factor for adapter bottleneck
+    adapter_non_linearity: str = "relu"  # Activation function for adapter
+    
     # Data settings
     train_ratio: float = 0.8
     validation_ratio: float = 0.1

@@ -8,7 +8,7 @@ from transformers import (
     get_linear_schedule_with_warmup
 )
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
-from peft import LoraConfig, PrefixTuningConfig, get_peft_model, TaskType, PeftModel
+from peft import LoraConfig, PrefixTuningConfig, AdapterConfig, get_peft_model, TaskType, PeftModel
 import os
 import time
 from typing import Dict, List, Optional, Tuple
@@ -61,6 +61,8 @@ class KoGPT2Trainer:
             self._setup_lora()
         elif self.config.use_prefix_tuning:
             self._setup_prefix_tuning()
+        elif self.config.use_adapter:
+            self._setup_adapter()
         else:
             # Configure fine-tuning strategy (only if not using PEFT)
             self._setup_finetuning_strategy()
@@ -191,6 +193,43 @@ class KoGPT2Trainer:
         print(f"  ✅ 현재 설정으로 약 {100 * trainable_params / total_params:.1f}%의 파라미터 학습")
         print(f"  💾 Prefix-tuning은 LoRA보다 더 적은 메모리를 사용하며 빠른 학습이 가능합니다")
         
+    def _setup_adapter(self):
+        """Setup Adapter configuration."""
+        print("Setting up Adapter fine-tuning...")
+        
+        # Configure Adapter
+        adapter_config = AdapterConfig(
+            task_type=TaskType.CAUSAL_LM,
+            reduction_factor=self.config.adapter_reduction_factor,
+            non_linearity=self.config.adapter_non_linearity,
+            target_modules=["c_attn", "c_proj"]  # KoGPT2에 적합한 모듈
+        )
+        
+        # Apply Adapter to the model
+        self.model = get_peft_model(self.model, adapter_config)
+        
+        # Print Adapter information
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        print(f"Adapter configuration:")
+        print(f"  - Reduction factor: {self.config.adapter_reduction_factor}")
+        print(f"  - Non-linearity: {self.config.adapter_non_linearity}")
+        print(f"  - Target modules: {adapter_config.target_modules}")
+        print(f"  - Total parameters: {total_params:,}")
+        print(f"  - Trainable parameters: {trainable_params:,}")
+        print(f"  - Trainable ratio: {100 * trainable_params / total_params:.2f}%")
+        
+        # 성능 최적화 팁
+        print(f"\n💡 Adapter 최적화 팁:")
+        if self.config.adapter_reduction_factor > 32:
+            print(f"  ⚠️  높은 reduction factor({self.config.adapter_reduction_factor}) 감지. 성능 향상을 위해 --adapter-reduction-factor 16 권장")
+        elif self.config.adapter_reduction_factor < 8:
+            print(f"  ⚠️  낮은 reduction factor({self.config.adapter_reduction_factor}) 감지. 메모리 효율성을 위해 8 이상 권장")
+        
+        print(f"  ✅ 현재 설정으로 약 {100 * trainable_params / total_params:.1f}%의 파라미터 학습")
+        print(f"  💾 Adapter는 안정적이고 해석 가능한 fine-tuning 방법입니다")
+        
     def count_parameters(self) -> int:
         """Count trainable parameters."""
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -268,6 +307,38 @@ class KoGPT2Trainer:
                     'weight_decay': 0.0
                 }
             ]
+        elif self.config.use_adapter:
+            adapter_params = []
+            base_params = []
+            
+            for name, param in param_optimizer:
+                if param.requires_grad:
+                    if 'adapter' in name:
+                        adapter_params.append((name, param))
+                    else:
+                        base_params.append((name, param))
+            
+            print(f"Adapter parameters: {len(adapter_params)}, Base parameters: {len(base_params)}")
+            
+            # Adapter 파라미터에는 표준 설정 적용
+            optimizer_grouped_parameters = [
+                {
+                    'params': [p for n, p in adapter_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay,
+                },
+                {
+                    'params': [p for n, p in adapter_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0,
+                },
+                {
+                    'params': [p for n, p in base_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay
+                },
+                {
+                    'params': [p for n, p in base_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0
+                }
+            ]
         else:
             optimizer_grouped_parameters = [
                 {
@@ -284,7 +355,7 @@ class KoGPT2Trainer:
             optimizer_grouped_parameters,
             lr=self.config.learning_rate,
             eps=1e-8,
-            betas=(0.9, 0.95) if (self.config.use_lora or self.config.use_prefix_tuning) else (0.9, 0.999)  # PEFT에 최적화된 beta값
+            betas=(0.9, 0.95) if (self.config.use_lora or self.config.use_prefix_tuning or self.config.use_adapter) else (0.9, 0.999)  # PEFT에 최적화된 beta값
         )
         
         self.scheduler = get_linear_schedule_with_warmup(
@@ -434,7 +505,7 @@ class KoGPT2Trainer:
         os.makedirs(save_path, exist_ok=True)
         
         # Save model (PEFT or full model)
-        if self.config.use_lora or self.config.use_prefix_tuning:
+        if self.config.use_lora or self.config.use_prefix_tuning or self.config.use_adapter:
             # Save PEFT adapter
             self.model.save_pretrained(save_path)
             # Also save base model config
@@ -586,8 +657,13 @@ class KoGPT2Trainer:
             with torch.no_grad():
                 # PEFT 모델의 경우 특별한 처리
                 if hasattr(self.model, 'base_model'):
-                    # PEFT model (LoRA or Prefix-tuning)
-                    peft_type = "LoRA" if self.config.use_lora else "Prefix-tuning"
+                    # PEFT model (LoRA, Prefix-tuning, or Adapter)
+                    if self.config.use_lora:
+                        peft_type = "LoRA"
+                    elif self.config.use_prefix_tuning:
+                        peft_type = "Prefix-tuning"
+                    else:
+                        peft_type = "Adapter"
                     print(f"🎛️ Using {peft_type} model for generation")
                     
                     # Prefix-tuning에 특화된 생성 파라미터
@@ -603,7 +679,7 @@ class KoGPT2Trainer:
                             eos_token_id=self.tokenizer.eos_token_id,
                             repetition_penalty=1.05  # 적당한 반복 방지
                         )
-                    else:
+                    elif self.config.use_lora:
                         # LoRA 모델
                         outputs = self.model.generate(
                             **inputs,
@@ -615,6 +691,19 @@ class KoGPT2Trainer:
                             pad_token_id=self.tokenizer.pad_token_id,
                             eos_token_id=self.tokenizer.eos_token_id,
                             repetition_penalty=1.1  # LoRA에서 반복 방지
+                        )
+                    else:
+                        # Adapter 모델
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_new_tokens=self.config.max_new_tokens,
+                            temperature=self.config.temperature,
+                            top_k=self.config.top_k,
+                            top_p=self.config.top_p,
+                            do_sample=self.config.do_sample,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            eos_token_id=self.tokenizer.eos_token_id,
+                            repetition_penalty=1.02  # Adapter는 가벼운 반복 방지
                         )
                 else:
                     # Regular model

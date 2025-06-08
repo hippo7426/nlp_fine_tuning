@@ -50,6 +50,15 @@ def parse_arguments():
     parser.add_argument('--prefix-hidden-size', type=int, default=None,
                       help='Prefix hidden size (default: model hidden size)')
     
+    # Adapter settings
+    parser.add_argument('--adapter', action='store_true', default=False,
+                      help='Use Adapter fine-tuning')
+    parser.add_argument('--adapter-reduction-factor', type=int, default=16,
+                      help='Adapter bottleneck reduction factor (default: 16)')
+    parser.add_argument('--adapter-non-linearity', type=str, default='relu',
+                      choices=['relu', 'gelu', 'swish'],
+                      help='Adapter activation function (default: relu)')
+    
     # Hardware
     parser.add_argument('--gpu', action='store_true', default=True,
                       help='Use GPU if available (default: True)')
@@ -122,6 +131,11 @@ def main():
     config.prefix_dropout = args.prefix_dropout
     config.prefix_hidden_size = args.prefix_hidden_size
     
+    # Adapter settings
+    config.use_adapter = args.adapter
+    config.adapter_reduction_factor = args.adapter_reduction_factor
+    config.adapter_non_linearity = args.adapter_non_linearity
+    
     # PEFT techniques optimization
     if config.use_lora:
         # LoRA는 일반적으로 더 높은 학습률이 필요함
@@ -143,10 +157,29 @@ def main():
         config.warmup_steps = 150  # 100 -> 150으로 증가
         print(f"🎯 Prefix-tuning 최적화: warmup steps를 {config.warmup_steps}로 증가")
     
+    if config.use_adapter:
+        # Adapter는 중간 정도의 학습률이 적합
+        if args.lr == 5e-5:  # 기본값인 경우에만 자동 조정
+            config.learning_rate = 1e-4  # 2배 증가
+            print(f"🎯 Adapter 최적화: 학습률을 {config.learning_rate:.0e}로 자동 증가")
+        
+        # warmup 단계 증가
+        config.warmup_steps = 100  # 기본값 유지
+        print(f"🎯 Adapter 최적화: warmup steps를 {config.warmup_steps}로 설정")
+    
     # PEFT 기법 충돌 체크
-    if config.use_lora and config.use_prefix_tuning:
-        print("⚠️ 경고: LoRA와 Prefix-tuning을 동시에 사용할 수 없습니다. LoRA만 사용합니다.")
-        config.use_prefix_tuning = False
+    peft_methods = [config.use_lora, config.use_prefix_tuning, config.use_adapter]
+    active_methods = sum(peft_methods)
+    
+    if active_methods > 1:
+        print("⚠️ 경고: 여러 PEFT 기법을 동시에 사용할 수 없습니다.")
+        if config.use_lora:
+            print("   LoRA만 사용합니다.")
+            config.use_prefix_tuning = False
+            config.use_adapter = False
+        elif config.use_prefix_tuning:
+            print("   Prefix-tuning만 사용합니다.")
+            config.use_adapter = False
     
     if args.cpu:
         config.use_gpu = False
@@ -179,6 +212,13 @@ def main():
             if args.lr == 5e-5:  # 기본값인 경우
                 config.learning_rate = 1.5e-4  # 보수적인 증가
                 print(f"   - Prefix-tuning + A100: Learning rate increased to {config.learning_rate:.0e}")
+        elif config.use_adapter:
+            config.batch_size = 24  # Adapter는 중간 정도 메모리 사용
+            print(f"   - Adapter + A100: Batch size increased to {config.batch_size}")
+            # Adapter + A100 조합
+            if args.lr == 5e-5:  # 기본값인 경우
+                config.learning_rate = 1.2e-4  # 적당한 증가
+                print(f"   - Adapter + A100: Learning rate increased to {config.learning_rate:.0e}")
         else:
             config.batch_size = 16  # Increase batch size for A100
             print(f"   - Batch size increased to {config.batch_size}")
@@ -209,6 +249,10 @@ def main():
         print(f"- Prefix length: {config.prefix_length}")
         print(f"- Prefix dropout: {config.prefix_dropout}")
         print(f"- Prefix hidden size: {config.prefix_hidden_size or 'model default'}")
+    print(f"- Use Adapter: {config.use_adapter}")
+    if config.use_adapter:
+        print(f"- Adapter reduction factor: {config.adapter_reduction_factor}")
+        print(f"- Adapter activation: {config.adapter_non_linearity}")
     print(f"- Epochs: {config.num_epochs}")
     print(f"- Learning rate: {config.learning_rate}")
     print(f"- Batch size: {config.batch_size}")
