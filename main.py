@@ -50,6 +50,15 @@ def parse_arguments():
     parser.add_argument('--prefix-hidden-size', type=int, default=None,
                       help='Prefix hidden size (default: model hidden size)')
     
+    # Prompt-tuning settings
+    parser.add_argument('--prompt-tuning', action='store_true', default=False,
+                      help='Use Prompt-tuning fine-tuning')
+    parser.add_argument('--prompt-length', type=int, default=20,
+                      help='Number of prompt tokens (default: 20)')
+    parser.add_argument('--prompt-init-method', type=str, default='RANDOM',
+                      choices=['RANDOM', 'TEXT'],
+                      help='Prompt initialization method (default: RANDOM)')
+    
     # Hardware
     parser.add_argument('--gpu', action='store_true', default=True,
                       help='Use GPU if available (default: True)')
@@ -122,6 +131,11 @@ def main():
     config.prefix_dropout = args.prefix_dropout
     config.prefix_hidden_size = args.prefix_hidden_size
     
+    # Prompt-tuning settings
+    config.use_prompt_tuning = args.prompt_tuning
+    config.prompt_length = args.prompt_length
+    config.prompt_init_method = args.prompt_init_method
+    
     # PEFT techniques optimization
     if config.use_lora:
         # LoRA는 일반적으로 더 높은 학습률이 필요함
@@ -143,10 +157,29 @@ def main():
         config.warmup_steps = 150  # 100 -> 150으로 증가
         print(f"🎯 Prefix-tuning 최적화: warmup steps를 {config.warmup_steps}로 증가")
     
+    if config.use_prompt_tuning:
+        # Prompt-tuning은 Prefix보다 더 단순하므로 안정적인 설정
+        if args.lr == 5e-5:  # 기본값인 경우에만 자동 조정
+            config.learning_rate = 1e-4  # 2배 증가 (Prefix와 동일)
+            print(f"🎯 Prompt-tuning 최적화: 학습률을 {config.learning_rate:.0e}로 자동 증가")
+        
+        # warmup 단계는 기본값 유지 (더 단순하므로)
+        config.warmup_steps = 100
+        print(f"🎯 Prompt-tuning 최적화: warmup steps를 {config.warmup_steps}로 설정")
+    
     # PEFT 기법 충돌 체크
-    if config.use_lora and config.use_prefix_tuning:
-        print("⚠️ 경고: LoRA와 Prefix-tuning을 동시에 사용할 수 없습니다. LoRA만 사용합니다.")
-        config.use_prefix_tuning = False
+    peft_methods = [config.use_lora, config.use_prefix_tuning, config.use_prompt_tuning]
+    active_methods = sum(peft_methods)
+    
+    if active_methods > 1:
+        print("⚠️ 경고: 여러 PEFT 기법을 동시에 사용할 수 없습니다.")
+        if config.use_lora:
+            print("   LoRA만 사용합니다.")
+            config.use_prefix_tuning = False
+            config.use_prompt_tuning = False
+        elif config.use_prefix_tuning:
+            print("   Prefix-tuning만 사용합니다.")
+            config.use_prompt_tuning = False
     
     if args.cpu:
         config.use_gpu = False
@@ -179,6 +212,13 @@ def main():
             if args.lr == 5e-5:  # 기본값인 경우
                 config.learning_rate = 1.5e-4  # 보수적인 증가
                 print(f"   - Prefix-tuning + A100: Learning rate increased to {config.learning_rate:.0e}")
+        elif config.use_prompt_tuning:
+            config.batch_size = 40  # Prompt-tuning은 가장 메모리 효율적
+            print(f"   - Prompt-tuning + A100: Batch size increased to {config.batch_size}")
+            # Prompt-tuning + A100 조합
+            if args.lr == 5e-5:  # 기본값인 경우
+                config.learning_rate = 1.3e-4  # 적당한 증가
+                print(f"   - Prompt-tuning + A100: Learning rate increased to {config.learning_rate:.0e}")
         else:
             config.batch_size = 16  # Increase batch size for A100
             print(f"   - Batch size increased to {config.batch_size}")
@@ -209,6 +249,10 @@ def main():
         print(f"- Prefix length: {config.prefix_length}")
         print(f"- Prefix dropout: {config.prefix_dropout}")
         print(f"- Prefix hidden size: {config.prefix_hidden_size or 'model default'}")
+    print(f"- Use Prompt-tuning: {config.use_prompt_tuning}")
+    if config.use_prompt_tuning:
+        print(f"- Prompt length: {config.prompt_length}")
+        print(f"- Prompt initialization: {config.prompt_init_method}")
     print(f"- Epochs: {config.num_epochs}")
     print(f"- Learning rate: {config.learning_rate}")
     print(f"- Batch size: {config.batch_size}")

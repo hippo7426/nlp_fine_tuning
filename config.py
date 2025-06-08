@@ -37,6 +37,11 @@ class TrainingConfig:
     prefix_dropout: float = 0.1  # Prefix dropout rate
     prefix_hidden_size: Optional[int] = None  # Prefix hidden size (None = model hidden size)
     
+    # Prompt-tuning settings
+    use_prompt_tuning: bool = False
+    prompt_length: int = 20  # Number of prompt tokens (simpler than prefix)
+    prompt_init_method: str = "RANDOM"  # Initialization method: RANDOM or TEXT
+    
     # Data settings
     train_ratio: float = 0.8
     validation_ratio: float = 0.1

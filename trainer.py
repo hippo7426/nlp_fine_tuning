@@ -8,7 +8,7 @@ from transformers import (
     get_linear_schedule_with_warmup
 )
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
-from peft import LoraConfig, PrefixTuningConfig, get_peft_model, TaskType, PeftModel
+from peft import LoraConfig, PrefixTuningConfig, PromptTuningConfig, get_peft_model, TaskType, PeftModel
 import os
 import time
 from typing import Dict, List, Optional, Tuple
@@ -61,6 +61,8 @@ class KoGPT2Trainer:
             self._setup_lora()
         elif self.config.use_prefix_tuning:
             self._setup_prefix_tuning()
+        elif self.config.use_prompt_tuning:
+            self._setup_prompt_tuning()
         else:
             # Configure fine-tuning strategy (only if not using PEFT)
             self._setup_finetuning_strategy()
@@ -191,6 +193,43 @@ class KoGPT2Trainer:
         print(f"  ✅ 현재 설정으로 약 {100 * trainable_params / total_params:.1f}%의 파라미터 학습")
         print(f"  💾 Prefix-tuning은 LoRA보다 더 적은 메모리를 사용하며 빠른 학습이 가능합니다")
         
+    def _setup_prompt_tuning(self):
+        """Setup Prompt-tuning configuration."""
+        print("Setting up Prompt-tuning fine-tuning...")
+        
+        # Configure Prompt-tuning - 단순하고 안정적인 설정
+        prompt_config = PromptTuningConfig(
+            task_type=TaskType.CAUSAL_LM,
+            num_virtual_tokens=self.config.prompt_length,
+            token_dim=self.model.config.hidden_size,
+            prompt_tuning_init=self.config.prompt_init_method
+        )
+        
+        # Apply Prompt-tuning to the model
+        self.model = get_peft_model(self.model, prompt_config)
+        
+        # Print Prompt-tuning information
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        print(f"Prompt-tuning configuration:")
+        print(f"  - Virtual tokens: {self.config.prompt_length}")
+        print(f"  - Token dimension: {self.model.config.hidden_size}")
+        print(f"  - Initialization method: {self.config.prompt_init_method}")
+        print(f"  - Total parameters: {total_params:,}")
+        print(f"  - Trainable parameters: {trainable_params:,}")
+        print(f"  - Trainable ratio: {100 * trainable_params / total_params:.2f}%")
+        
+        # 성능 최적화 팁
+        print(f"\n💡 Prompt-tuning 최적화 팁:")
+        if self.config.prompt_length < 10:
+            print(f"  ⚠️  짧은 prompt 길이({self.config.prompt_length}) 감지. 성능 향상을 위해 --prompt-length 20 이상 권장")
+        elif self.config.prompt_length > 50:
+            print(f"  ⚠️  긴 prompt 길이({self.config.prompt_length}) 감지. 효율성을 위해 --prompt-length 30 이하 권장")
+        
+        print(f"  ✅ 현재 설정으로 약 {100 * trainable_params / total_params:.1f}%의 파라미터 학습")
+        print(f"  💾 Prompt-tuning은 가장 단순하고 메모리 효율적인 PEFT 방법입니다")
+        
     def count_parameters(self) -> int:
         """Count trainable parameters."""
         return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -268,6 +307,38 @@ class KoGPT2Trainer:
                     'weight_decay': 0.0
                 }
             ]
+        elif self.config.use_prompt_tuning:
+            prompt_params = []
+            base_params = []
+            
+            for name, param in param_optimizer:
+                if param.requires_grad:
+                    if 'prompt' in name or 'embedding' in name:
+                        prompt_params.append((name, param))
+                    else:
+                        base_params.append((name, param))
+            
+            print(f"Prompt-tuning parameters: {len(prompt_params)}, Base parameters: {len(base_params)}")
+            
+            # Prompt-tuning 파라미터에는 단순한 설정 적용
+            optimizer_grouped_parameters = [
+                {
+                    'params': [p for n, p in prompt_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay * 0.1,  # 매우 낮은 weight decay
+                },
+                {
+                    'params': [p for n, p in prompt_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0,
+                },
+                {
+                    'params': [p for n, p in base_params if not any(nd in n for nd in no_decay)],
+                    'weight_decay': self.config.weight_decay
+                },
+                {
+                    'params': [p for n, p in base_params if any(nd in n for nd in no_decay)],
+                    'weight_decay': 0.0
+                }
+            ]
         else:
             optimizer_grouped_parameters = [
                 {
@@ -284,7 +355,7 @@ class KoGPT2Trainer:
             optimizer_grouped_parameters,
             lr=self.config.learning_rate,
             eps=1e-8,
-            betas=(0.9, 0.95) if (self.config.use_lora or self.config.use_prefix_tuning) else (0.9, 0.999)  # PEFT에 최적화된 beta값
+            betas=(0.9, 0.95) if (self.config.use_lora or self.config.use_prefix_tuning or self.config.use_prompt_tuning) else (0.9, 0.999)  # PEFT에 최적화된 beta값
         )
         
         self.scheduler = get_linear_schedule_with_warmup(
@@ -434,7 +505,7 @@ class KoGPT2Trainer:
         os.makedirs(save_path, exist_ok=True)
         
         # Save model (PEFT or full model)
-        if self.config.use_lora or self.config.use_prefix_tuning:
+        if self.config.use_lora or self.config.use_prefix_tuning or self.config.use_prompt_tuning:
             # Save PEFT adapter
             self.model.save_pretrained(save_path)
             # Also save base model config
@@ -586,8 +657,13 @@ class KoGPT2Trainer:
             with torch.no_grad():
                 # PEFT 모델의 경우 특별한 처리
                 if hasattr(self.model, 'base_model'):
-                    # PEFT model (LoRA or Prefix-tuning)
-                    peft_type = "LoRA" if self.config.use_lora else "Prefix-tuning"
+                    # PEFT model (LoRA, Prefix-tuning, or Prompt-tuning)
+                    if self.config.use_lora:
+                        peft_type = "LoRA"
+                    elif self.config.use_prefix_tuning:
+                        peft_type = "Prefix-tuning"
+                    else:
+                        peft_type = "Prompt-tuning"
                     print(f"🎛️ Using {peft_type} model for generation")
                     
                     # Prefix-tuning에 특화된 생성 파라미터
@@ -603,7 +679,7 @@ class KoGPT2Trainer:
                             eos_token_id=self.tokenizer.eos_token_id,
                             repetition_penalty=1.05  # 적당한 반복 방지
                         )
-                    else:
+                    elif self.config.use_lora:
                         # LoRA 모델
                         outputs = self.model.generate(
                             **inputs,
@@ -615,6 +691,19 @@ class KoGPT2Trainer:
                             pad_token_id=self.tokenizer.pad_token_id,
                             eos_token_id=self.tokenizer.eos_token_id,
                             repetition_penalty=1.1  # LoRA에서 반복 방지
+                        )
+                    else:
+                        # Prompt-tuning 모델
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_new_tokens=self.config.max_new_tokens,
+                            temperature=self.config.temperature * 0.95,  # 약간 낮은 temperature
+                            top_k=self.config.top_k,
+                            top_p=self.config.top_p,
+                            do_sample=self.config.do_sample,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            eos_token_id=self.tokenizer.eos_token_id,
+                            repetition_penalty=1.03  # 가벼운 반복 방지
                         )
                 else:
                     # Regular model
