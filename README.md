@@ -121,3 +121,7 @@ python main.py --mode train --head-only --cpu --epochs 3
 ```bash
 python main.py --mode generate --model-path saved_models/best_model
 ```
+
+## LLM 사용 관련
+
+프로젝트 코드를 작성하는데 Claude사의 Sonnet 모델을 활용하였으며, 세부 기능 추가와 디버깅은 수작업으로 진행하였습니다.
