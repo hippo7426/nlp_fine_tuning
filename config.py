@@ -16,9 +16,6 @@ class TrainingConfig:
     warmup_steps: int = 100
     weight_decay: float = 0.01
     
-    # A100 GPU optimized settings
-    use_mixed_precision: bool = True  # Enable FP16/BF16 for A100
-    dataloader_num_workers: int = 4   # Increase for A100
     
     # Fine-tuning strategy
     full_finetuning: bool = True

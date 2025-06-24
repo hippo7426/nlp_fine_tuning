@@ -65,12 +65,6 @@ def parse_arguments():
     parser.add_argument('--cpu', action='store_true', default=False,
                       help='Force CPU usage')
     
-    # A100 optimization
-    parser.add_argument('--a100-optimized', action='store_true', default=False,
-                      help='Use A100 optimized settings (larger batch size, mixed precision)')
-    parser.add_argument('--mixed-precision', action='store_true', default=False,
-                      help='Enable mixed precision training')
-    
     # Training parameters
     parser.add_argument('--epochs', type=int, default=3,
                       help='Number of training epochs (default: 3)')
@@ -195,40 +189,7 @@ def main():
     # Logging settings
     config.quiet_mode = args.quiet
     
-    # A100 optimization settings
-    if args.a100_optimized:
-        print("🚀 A100 optimization enabled!")
-        if config.use_lora:
-            config.batch_size = 64  # LoRA는 메모리를 적게 사용하므로 더 큰 배치 사이즈 가능
-            print(f"   - LoRA + A100: Batch size increased to {config.batch_size}")
-            # LoRA + A100 조합에서는 더 적극적인 학습률 적용
-            if args.lr == 5e-5:  # 기본값인 경우
-                config.learning_rate = 2e-4  # 더 높은 학습률
-                print(f"   - LoRA + A100: Learning rate increased to {config.learning_rate:.0e}")
-        elif config.use_prefix_tuning:
-            config.batch_size = 32  # Prefix-tuning도 메모리 효율적
-            print(f"   - Prefix-tuning + A100: Batch size increased to {config.batch_size}")
-            # Prefix-tuning + A100 조합에서는 보수적인 학습률 적용
-            if args.lr == 5e-5:  # 기본값인 경우
-                config.learning_rate = 1.5e-4  # 보수적인 증가
-                print(f"   - Prefix-tuning + A100: Learning rate increased to {config.learning_rate:.0e}")
-        elif config.use_prompt_tuning:
-            config.batch_size = 40  # Prompt-tuning은 가장 메모리 효율적
-            print(f"   - Prompt-tuning + A100: Batch size increased to {config.batch_size}")
-            # Prompt-tuning + A100 조합
-            if args.lr == 5e-5:  # 기본값인 경우
-                config.learning_rate = 1.3e-4  # 적당한 증가
-                print(f"   - Prompt-tuning + A100: Learning rate increased to {config.learning_rate:.0e}")
-        else:
-            config.batch_size = 16  # Increase batch size for A100
-            print(f"   - Batch size increased to {config.batch_size}")
-        config.use_mixed_precision = True
-        config.dataloader_num_workers = 4
-        print(f"   - Mixed precision enabled")
-        print(f"   - DataLoader workers: {config.dataloader_num_workers}")
-    
-    if args.mixed_precision:
-        config.use_mixed_precision = True
+
     
     # Store command line arguments in config for saving
     config.command_line_args = vars(args)
